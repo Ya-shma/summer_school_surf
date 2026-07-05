@@ -11,10 +11,12 @@
 | phone | string (unique) | Номер телефона — логин; вход подтверждается кодом из SMS (OTP, FR-43) |
 | age | int? (nullable) | Возраст (опционально, FR-47) |
 | birthday | date? (nullable) | День рождения (опционально, FR-47) |
-| safety_rules_accepted | boolean | Флаг «ознакомлен с правилами и техникой безопасности» (FR-51). Выставляется при первой записи, повторно не запрашивается |
-| rope_access | boolean | Флаг «допущен к верёвкам» (FR-55). Выставляется владельцем в существующей админке после вводного инструктажа. Без флага запись на опытный слот запрещена |
-| is_permanent | boolean | Флаг «постоянный клиент» (FR-59). Выставляется автоматически после 10 тренировок в статусе `attended` (BR-10) |
-| is_blocked | boolean | Флаг блокировки из-за нарушений (FR-56). 3 нарушения подряд → блокировка на неделю |
+| push_token | string? (nullable) | Токен для push-уведомлений (APNs/FCM), регистрируется при входе (FR-33) |
+| safety_rules_accepted | boolean | Флаг «ознакомлен с правилами и техникой безопасности» (FR-51) |
+| rope_access | boolean | Флаг «допущен к верёвкам» (FR-55) |
+| is_permanent | boolean | Флаг «постоянный клиент» (FR-59). Выставляется автоматически после 10 attended |
+| violation_counter | int | Счётчик нарушений подряд (cancelled_late + no_show). Сбрасывается после attended. При 3 → is_blocked = true (BR-5) |
+| is_blocked | boolean | Флаг блокировки из-за нарушений (FR-56) |
 | blocked_until | datetime? (nullable) | Дата окончания блокировки (FR-56) |
 | blocked_reason | string? (nullable) | Причина блокировки (FR-56) |
 | created_at | datetime | Дата регистрации |
