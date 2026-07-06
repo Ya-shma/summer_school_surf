@@ -28,7 +28,7 @@ def seed():
         db.refresh(i1); db.refresh(i2); db.refresh(i3)
         
         # === ПОЛЬЗОВАТЕЛИ ===
-        # Тестовый пользователь (вы)
+        # Тестовый пользователь
         u1 = User(
             phone="+79991234567",
             name="Тестовый Клиент",
@@ -37,7 +37,7 @@ def seed():
             is_allowed_to_rope=True,
             is_permanent=False,
             violations_count=0,
-            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
+            safety_rules_accepted=True,
             attended_count=7,
         )
         
@@ -48,7 +48,7 @@ def seed():
             is_allowed_to_rope=True,
             is_permanent=True,
             attended_count=15,
-            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
+            safety_rules_accepted=True, 
         )
         
         # Новичок (без допуска к верёвкам)
@@ -57,7 +57,7 @@ def seed():
             name="Новичок Иван",
             is_allowed_to_rope=False,
             attended_count=2,
-            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
+            safety_rules_accepted=True, 
         )
         
         # Заблокированный клиент
@@ -68,7 +68,7 @@ def seed():
             violations_count=3,
             blocked_until=datetime.utcnow() + timedelta(days=5),
             attended_count=4,
-            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
+            safety_rules_accepted=True,  
         )
         
         db.add_all([u1, u2, u3, u4])

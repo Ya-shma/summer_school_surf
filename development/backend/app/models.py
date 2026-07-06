@@ -16,7 +16,7 @@ class User(Base):
     blocked_until = Column(DateTime, nullable=True)
     safety_rules_accepted = Column(Boolean, default=False)
     attended_count = Column(Integer, default=0)
-    push_subscription = Column(Text, nullable=True)  # Web Push subscription JSON
+    push_subscription = Column(Text, nullable=True)  
 
 class Instructor(Base):
     __tablename__ = "instructors"

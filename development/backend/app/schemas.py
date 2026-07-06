@@ -13,7 +13,7 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     age: Optional[int] = None
     birthday: Optional[str] = None
-    safety_rules_accepted: Optional[bool] = None  # ✅ ДОБАВЛЕНО
+    safety_rules_accepted: Optional[bool] = None 
 
 class SlotOut(BaseModel):
     id: int
