@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { getSlots, joinWaitlist, createBooking, getMe } from '../api';
+import { getSlots, joinWaitlist, getMe, updateProfile } from '../api';
 import { useNavigate } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import FiltersModal from '../components/FiltersModal';
+import BookingModal from '../components/BookingModal';
+import SafetyRulesModal from '../components/SafetyRulesModal';
 
 export default function Schedule() {
   const [slots, setSlots] = useState([]);
@@ -10,9 +12,11 @@ export default function Schedule() {
   const [showFilters, setShowFilters] = useState(false);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [showSafetyModal, setShowSafetyModal] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState(null);
   const navigate = useNavigate();
 
-  // Загрузка профиля при монтировании
   useEffect(() => {
     if (!localStorage.getItem('token')) {
       navigate('/login');
@@ -20,7 +24,10 @@ export default function Schedule() {
     }
     
     getMe()
-      .then(res => setUser(res.data))
+      .then(res => {
+        console.log('[USER]', res.data);
+        setUser(res.data);
+      })
       .catch(err => {
         if (err.response?.status === 401) {
           localStorage.removeItem('token');
@@ -29,8 +36,9 @@ export default function Schedule() {
       });
   }, [navigate]);
 
-  // 🔑 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: перезагрузка слотов при ЛЮБОМ изменении filters
   useEffect(() => {
+    if (!user) return;
+    
     const loadSlots = async () => {
       setLoading(true);
       try {
@@ -49,9 +57,11 @@ export default function Schedule() {
     };
     
     loadSlots();
-  }, [filters]); // ← Зависимость от filters — главный фикс
+  }, [filters, user]);
 
-  const book = async (slot) => {
+  const handleBookClick = (slot) => {
+    console.log('[BOOK_CLICK]', { slot, user, safetyAccepted: user?.safety_rules_accepted });
+    
     // Проверка гейткинга
     if (slot.format === 'advanced' && !user?.is_allowed_to_rope) {
       alert('Сначала пройдите вводную тренировку для новичков');
@@ -66,56 +76,41 @@ export default function Schedule() {
 
     // Проверка согласия с ТБ
     if (!user?.safety_rules_accepted) {
-      const accept = confirm('Необходимо принять правила техники безопасности.\nПринять сейчас?');
-      if (accept) {
-        try {
-          await fetch('http://localhost:8000/api/auth/profile', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('token')}`
-            },
-            body: JSON.stringify({ safety_rules_accepted: true })
-          });
-          setUser({ ...user, safety_rules_accepted: true });
-        } catch (e) {
-          alert('Ошибка сохранения');
-          return;
-        }
-      } else {
-        return;
-      }
+      console.log('[BOOK_CLICK] Safety rules not accepted, showing modal');
+      setSelectedSlot(slot);
+      setShowSafetyModal(true);
+      return;
     }
 
-    // Выбор снаряжения
-    const useRental = confirm('Нужно прокатное снаряжение?\n\nOK = прокат\nОтмена = свои скальники');
-    const equipment = useRental ? 'rental' : 'own';
+    // Если ТБ принято — сразу показываем модалку записи
+    console.log('[BOOK_CLICK] Safety rules accepted, showing booking modal');
+    setSelectedSlot(slot);
+    setShowBookingModal(true);
+  };
 
+  const handleSafetyAccepted = async () => {
+    console.log('[SAFETY_ACCEPTED] Updating profile...');
     try {
-      await createBooking({ 
-        slot_id: slot.id, 
-        equipment_type: equipment 
-      });
-      alert('✅ Запись создана!');
-      navigate('/bookings');
+      const res = await updateProfile({ safety_rules_accepted: true });
+      console.log('[SAFETY_ACCEPTED] Response:', res.data);
+      
+      // Обновляем user state
+      setUser(prev => ({ ...prev, safety_rules_accepted: true }));
+      setShowSafetyModal(false);
+      
+      // После принятия ТБ — показываем модалку записи
+      setShowBookingModal(true);
     } catch (e) {
-      const err = e.response?.data?.detail;
-      if (typeof err === 'object' && err.code) {
-        const messages = {
-          slot_full: 'Места закончились',
-          rental_unavailable: 'Проката нет, выберите свои скальники',
-          rope_access_required: 'Сначала пройдите вводную тренировку для новичков',
-          client_blocked: `Вы заблокированы до ${new Date(err.blocked_until).toLocaleDateString('ru-RU')}`,
-          double_booking: 'Вы уже записаны на эту тренировку',
-          slot_cancelled: 'Тренировка отменена',
-          slot_started: 'Тренировка уже началась',
-          safety_rules_not_accepted: 'Необходимо принять правила техники безопасности',
-        };
-        alert(messages[err.code] || 'Ошибка записи');
-      } else {
-        alert(err || 'Ошибка записи');
-      }
+      console.error('[SAFETY_ACCEPTED] Error:', e);
+      alert('Ошибка сохранения');
     }
+  };
+
+  const handleBookingSuccess = () => {
+    setShowBookingModal(false);
+    setSelectedSlot(null);
+    alert('✅ Запись создана!');
+    navigate('/bookings');
   };
 
   const toggleWaitlist = async (slot) => {
@@ -133,25 +128,6 @@ export default function Schedule() {
 
   const formatLabel = (f) => f === 'beginner' ? 'Новички' : 'Опытные';
 
-  // 🔑 Функции изменения фильтров — просто меняют state,
-  // useEffect сам перезагрузит данные
-  const removeFormatFilter = () => {
-    setFilters(prev => ({ ...prev, format: null }));
-  };
-
-  const removeAvailableFilter = () => {
-    setFilters(prev => ({ ...prev, only_available: false }));
-  };
-
-  const resetAllFilters = () => {
-    setFilters({ format: null, only_available: false });
-  };
-
-  const applyFilters = (newFilters) => {
-    setFilters(newFilters);
-    setShowFilters(false);
-  };
-
   return (
     <>
       <div className="main-content">
@@ -162,15 +138,13 @@ export default function Schedule() {
           </button>
         </div>
 
-        {/* Активные фильтры — чипы */}
         {(filters.format || filters.only_available) && (
           <div style={{marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center'}}>
             {filters.format && (
               <span 
                 className="chip" 
                 style={{cursor: 'pointer', background: '#E8F5E9', color: '#2E7D32'}}
-                onClick={removeFormatFilter}
-                title="Убрать фильтр"
+                onClick={() => setFilters({...filters, format: null})}
               >
                 {formatLabel(filters.format)} ✕
               </span>
@@ -179,23 +153,14 @@ export default function Schedule() {
               <span 
                 className="chip" 
                 style={{cursor: 'pointer', background: '#FFF3E0', color: '#E65100'}}
-                onClick={removeAvailableFilter}
-                title="Убрать фильтр"
+                onClick={() => setFilters({...filters, only_available: false})}
               >
                 Только свободные ✕
               </span>
             )}
-            <button 
-              className="btn-secondary" 
-              onClick={resetAllFilters}
-              style={{padding: '4px 12px', minHeight: '32px', fontSize: '13px'}}
-            >
-              Сбросить все
-            </button>
           </div>
         )}
 
-        {/* Контент */}
         {loading ? (
           <div>
             {[1,2,3].map(i => (
@@ -206,7 +171,7 @@ export default function Schedule() {
           <div className="empty-state">
             <p>Пока нет доступных тренировок</p>
             {(filters.format || filters.only_available) && (
-              <button className="btn-secondary" onClick={resetAllFilters} style={{marginTop: 12}}>
+              <button className="btn-secondary" onClick={() => setFilters({})} style={{marginTop: 12}}>
                 Сбросить фильтры
               </button>
             )}
@@ -262,7 +227,7 @@ export default function Schedule() {
                   ) : (
                     <button 
                       className="btn-primary" 
-                      onClick={() => book(s)} 
+                      onClick={() => handleBookClick(s)} 
                       style={{width: '100%'}}
                     >
                       Записаться · {s.price} ₽
@@ -280,8 +245,24 @@ export default function Schedule() {
       {showFilters && (
         <FiltersModal
           filters={filters}
-          onSave={applyFilters}
+          onSave={(f) => { setFilters(f); setShowFilters(false); }}
           onClose={() => setShowFilters(false)}
+        />
+      )}
+
+      {showSafetyModal && selectedSlot && (
+        <SafetyRulesModal
+          onAccept={handleSafetyAccepted}
+          onClose={() => { setShowSafetyModal(false); setSelectedSlot(null); }}
+        />
+      )}
+
+      {showBookingModal && selectedSlot && user && (
+        <BookingModal
+          slot={selectedSlot}
+          user={user}
+          onSuccess={handleBookingSuccess}
+          onClose={() => { setShowBookingModal(false); setSelectedSlot(null); }}
         />
       )}
     </>

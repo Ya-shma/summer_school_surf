@@ -13,6 +13,7 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     age: Optional[int] = None
     birthday: Optional[str] = None
+    safety_rules_accepted: Optional[bool] = None  # ✅ ДОБАВЛЕНО
 
 class SlotOut(BaseModel):
     id: int
@@ -26,9 +27,12 @@ class SlotOut(BaseModel):
     status: str = "scheduled"
     cancel_reason: Optional[str] = None
 
+    class Config:
+        from_attributes = True
+
 class BookingCreate(BaseModel):
     slot_id: int
-    equipment_type: str
+    equipment_type: str  # 'own' | 'rental'
     child_age: Optional[int] = None
 
 class BookingOut(BaseModel):
@@ -43,6 +47,9 @@ class BookingOut(BaseModel):
     can_cancel: bool
     slot_status: str = "scheduled"
     cancel_reason: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 class RatingCreate(BaseModel):
     booking_id: int

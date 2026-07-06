@@ -4,6 +4,13 @@ from .database import engine, Base, SessionLocal
 from .models import Instructor, Slot, User, Booking, Rating, WaitlistEntry
 from datetime import datetime, timedelta
 import random
+import logging
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Создание таблиц
 Base.metadata.create_all(bind=engine)
@@ -27,11 +34,11 @@ def seed():
             name="Тестовый Клиент",
             age=28,
             birthday="1998-05-15",
-            is_allowed_to_rope=True,  # Допущен к верёвкам
+            is_allowed_to_rope=True,
             is_permanent=False,
             violations_count=0,
-            safety_rules_accepted=True,
-            attended_count=7,  # Почти постоянный (нужно 10)
+            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
+            attended_count=7,
         )
         
         # Постоянный клиент (для проверки бейджа)
@@ -41,16 +48,16 @@ def seed():
             is_allowed_to_rope=True,
             is_permanent=True,
             attended_count=15,
-            safety_rules_accepted=True,
+            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
         )
         
         # Новичок (без допуска к верёвкам)
         u3 = User(
             phone="+79991112233",
             name="Новичок Иван",
-            is_allowed_to_rope=False,  # НЕ допущен к верёвкам
+            is_allowed_to_rope=False,
             attended_count=2,
-            safety_rules_accepted=False,  # Не принял ТБ
+            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
         )
         
         # Заблокированный клиент
@@ -61,7 +68,7 @@ def seed():
             violations_count=3,
             blocked_until=datetime.utcnow() + timedelta(days=5),
             attended_count=4,
-            safety_rules_accepted=True,
+            safety_rules_accepted=True,  # ✅ УЖЕ ПРИНЯТО
         )
         
         db.add_all([u1, u2, u3, u4])
@@ -99,12 +106,12 @@ def seed():
             format="beginner",
             instructor_id=i3.id,
             total_places=8,
-            booked_places=8,  # Заполнен
-            rental_available=0,  # Проката нет
+            booked_places=8,
+            rental_available=0,
             status="scheduled",
         )
         
-        # Слот 4: Отменённый скалодромом (для проверки cancelled_by_gym)
+        # Слот 4: Отменённый скалодромом
         s4 = Slot(
             starts_at=now + timedelta(days=5, hours=14),
             format="advanced",
@@ -153,7 +160,7 @@ def seed():
         for d in range(7):
             for h in [10, 14, 18, 20]:
                 if d == 0 and h <= now.hour:
-                    continue  # Пропускаем прошедшие часы сегодня
+                    continue
                 fmt = random.choice(["beginner", "advanced"])
                 slot = Slot(
                     starts_at=now + timedelta(days=d, hours=h - now.hour),
@@ -172,7 +179,6 @@ def seed():
         db.refresh(s5); db.refresh(s6); db.refresh(s7)
         
         # === БРОНИ ===
-        # Бронь 1: Активная (booked) - у тестового клиента на слот 1
         b1 = Booking(
             user_id=u1.id,
             slot_id=s1.id,
@@ -180,7 +186,6 @@ def seed():
             status="booked",
         )
         
-        # Бронь 2: Активная с прокатом - у тестового клиента на слот 2
         b2 = Booking(
             user_id=u1.id,
             slot_id=s2.id,
@@ -188,7 +193,6 @@ def seed():
             status="booked",
         )
         
-        # Бронь 3: Отменённая клиентом (cancelled_by_client)
         b3 = Booking(
             user_id=u1.id,
             slot_id=s6.id,
@@ -196,7 +200,6 @@ def seed():
             status="cancelled_by_client",
         )
         
-        # Бронь 4: Посещённая (attended) - для оценки
         b4 = Booking(
             user_id=u1.id,
             slot_id=s5.id,
@@ -204,7 +207,6 @@ def seed():
             status="attended",
         )
         
-        # Бронь 5: Отменённая скалодромом (cancelled_by_gym)
         b5 = Booking(
             user_id=u1.id,
             slot_id=s4.id,
@@ -212,7 +214,6 @@ def seed():
             status="cancelled_by_gym",
         )
         
-        # Бронь 6: Постоянного клиента
         b6 = Booking(
             user_id=u2.id,
             slot_id=s1.id,
@@ -220,7 +221,6 @@ def seed():
             status="booked",
         )
         
-        # Бронь 7: Заполненный слот (для Alert List)
         b7 = Booking(
             user_id=u2.id,
             slot_id=s3.id,
@@ -234,7 +234,6 @@ def seed():
         db.refresh(b5); db.refresh(b6); db.refresh(b7)
         
         # === ОЦЕНКИ ===
-        # Оценка для брони b4 (attended)
         r1 = Rating(
             booking_id=b4.id,
             stars=5,
@@ -242,7 +241,6 @@ def seed():
         db.add(r1)
         
         # === ALERT LIST ===
-        # Тестовый клиент в списке ожидания на заполненный слот
         w1 = WaitlistEntry(
             slot_id=s3.id,
             user_id=u1.id,

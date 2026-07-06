@@ -40,11 +40,25 @@ def update_profile(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if data.name: user.name = data.name
-    if data.age is not None: user.age = data.age
-    if data.birthday: user.birthday = data.birthday
+    # ✅ ДОБАВЛЕНО: обработка safety_rules_accepted
+    if data.safety_rules_accepted is not None:
+        user.safety_rules_accepted = data.safety_rules_accepted
+    
+    if data.name:
+        user.name = data.name
+    if data.age is not None:
+        user.age = data.age
+    if data.birthday:
+        user.birthday = data.birthday
+    
     db.commit()
-    return {"status": "ok"}
+    db.refresh(user)
+    
+    return {
+        "status": "ok",
+        "safety_rules_accepted": user.safety_rules_accepted,
+        "name": user.name,
+    }
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
@@ -57,4 +71,6 @@ def me(user: User = Depends(get_current_user)):
         "is_allowed_to_rope": user.is_allowed_to_rope,
         "is_permanent": user.is_permanent,
         "attended_count": user.attended_count,
+        "safety_rules_accepted": user.safety_rules_accepted,  # ✅ ДОБАВЛЕНО
+        "blocked_until": user.blocked_until.isoformat() if user.blocked_until else None,
     }
