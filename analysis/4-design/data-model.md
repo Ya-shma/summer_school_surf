@@ -158,6 +158,7 @@ stateDiagram-v2
     cancelled_by_gym --> [*]
     attended --> [*]
     no_show --> [*]
+```
 
 ### Slot (Тренировка / слот)
 
@@ -179,7 +180,7 @@ stateDiagram-v2
     scheduled --> [*]: Старт прошёл (производное)
     
     cancelled --> [*]
-
+```
 
 Ключевые инварианты (целостность данных)
 Slot.free_seats = Slot.total_seats − Σ(booked bookings) — место при поздней отмене (cancelled_late) и неявке (no_show) НЕ освобождается.
@@ -272,3 +273,4 @@ erDiagram
         enum status "active | notified | expired"
         datetime created_at
     }
+```
