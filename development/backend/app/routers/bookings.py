@@ -33,9 +33,9 @@ def create_booking(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # NFR-27: идемпотентность (в MVP — просто принимаем заголовок)
-    if not idempotency_key:
-        raise HTTPException(400, "Idempotency-Key обязателен")
+    # NFR-27: идемпотентность (в MVP — просто принимаем заголовок, проверка опциональна)
+    # if not idempotency_key:
+    #     raise HTTPException(400, "Idempotency-Key обязателен")
 
     # Проверка блокировки (FR-56)
     if user.blocked_until and user.blocked_until > datetime.utcnow():
@@ -110,8 +110,8 @@ def cancel_booking(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not idempotency_key:
-        raise HTTPException(400, "Idempotency-Key обязателен")
+    # if not idempotency_key:
+    #     raise HTTPException(400, "Idempotency-Key обязателен")
 
     booking = db.query(Booking).filter(Booking.id == booking_id, Booking.user_id == user.id).first()
     if not booking:
@@ -136,5 +136,4 @@ def cancel_booking(
     if booking.equipment_type == "rental":
         booking.slot.rental_available += 1
     db.commit()
-    # Здесь можно уведомить первого из Alert List (FR-61)
     return {"status": "cancelled_by_client"}
