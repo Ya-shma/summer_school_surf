@@ -1,39 +1,36 @@
 # Sequence-диаграммы API-взаимодействия
- 
-> **Связанные артефакты:** `use-cases.md`, `functional-requirements.md`, `non-functional-requirements.md`, `design-brief.md`  
-> **Цель:** формализовать обмен вызовами между клиентским приложением и бэкендом в критичных сценариях бронирования. Диаграммы служат контрактом для мобильной разработки и основой для нагрузочного/интеграционного тестирования.
 
----
+Связанные артефакты: `use-cases.md`, `functional-requirements.md`, `non-functional-requirements.md`, `design-brief.md`
+
+**Цель:** формализовать обмен вызовами между клиентским веб-приложением и бэкендом в критичных сценариях бронирования. Диаграммы служат контрактом для разработки и основой для нагрузочного/интеграционного тестирования.
 
 ## 1. Участники (Actors)
 
 | Участник | Роль |
 |---|---|
-| **Client** | Мобильное приложение (iOS / Android) |
-| **Keychain** | Защищённое хранилище устройства (Keychain / Keystore) |
-| **API** | Бэкенд скалодрома (источник истины) |
-| **SMS** | SMS-провайдер (OTP) |
-| **Push** | APNs / FCM |
+| Client | Веб-приложение (браузер) |
+| Storage | Защищённое хранилище браузера (HttpOnly cookies / secure localStorage) |
+| API | Бэкенд скалодрома (источник истины) |
+| SMS | SMS-провайдер (OTP) |
+| Push | Web Push API (VAPID + service worker) |
 
-> Все взаимодействия с API — по HTTPS (TLS 1.2+). Все мутирующие запросы требуют заголовок `Idempotency-Key: <UUID v4>` (NFR-27).
-
----
+Все взаимодействия с API — по HTTPS (TLS 1.2+). Все мутирующие запросы требуют заголовок `Idempotency-Key: <UUID v4>` (NFR-27).
 
 ## 2. UC-1. Регистрация и вход по SMS OTP
 
-**Сценарий:** новый клиент вводит телефон, получает код, создаёт профиль.  
+**Сценарий:** новый клиент вводит телефон, получает код, создаёт профиль.
 **Связь:** UC-1, FR-1, FR-2, FR-43, FR-50, NFR-18, NFR-19.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
-    participant K as Keychain
+    participant C as Client (браузер)
+    participant S as Storage
     participant API as API
     participant SMS as SMS-провайдер
 
-    U->>C: Открыть приложение
+    U->>C: Открыть веб-приложение
     C->>U: Экран входа (телефон + галочка ПДн)
     U->>C: Ввести телефон, поставить галочку ПДн
     C->>API: POST /auth/otp/request<br/>{phone, consent_pd=true}
@@ -48,7 +45,7 @@ sequenceDiagram
 
     U->>C: Ввести код
     C->>API: POST /auth/otp/verify<br/>{phone, code}
-    
+
     alt Неверный код (< 3 попыток)
         API-->>C: 401 {error: "invalid_code", attempts_left: 2}
         C-->>U: «Неверный код, попробуйте ещё раз»
@@ -60,14 +57,14 @@ sequenceDiagram
         C-->>U: «Слишком много попыток, попробуйте через N минут»
     else Успех (существующий клиент)
         API-->>C: 200 {access_token, refresh_token, profile}
-        C->>K: Сохранить access + refresh (Keychain/Keystore)
-        C->>API: POST /push/token {push_token}
+        C->>S: Сохранить access + refresh (HttpOnly cookies / secure localStorage)
+        C->>API: POST /push/subscription {push_subscription}
         API-->>C: 200
         C-->>U: Главный экран «Расписание»
     else Успех (новый клиент)
         API-->>C: 200 {access_token, refresh_token, profile: null}
-        C->>K: Сохранить токены
-        C->>API: POST /push/token {push_token}
+        C->>S: Сохранить токены
+        C->>API: POST /push/subscription {push_subscription}
         C-->>U: Экран заполнения профиля
         U->>C: Ввести имя (обяз.), возраст, ДР (опц.)
         C->>API: PATCH /profile {name, age?, birthday?}
@@ -80,8 +77,8 @@ sequenceDiagram
 TTL OTP — 5 минут; при повторной отправке старый код аннулируется (NFR-19).
 Rate-limit: ~1 запрос / 30–60 с, ~5 / час.
 После 3 неверных попыток — блокировка на 15 минут.
-Токены хранятся только в Keychain/Keystore (NFR-18).
-Push-токен регистрируется сразу после входа.
+Токены хранятся в HttpOnly cookies / secure localStorage (NFR-18).
+Push-подписка регистрируется сразу после входа.
 
 ## 3. UC-2. Просмотр слотов и открытие карточки
 
@@ -92,7 +89,7 @@ Push-токен регистрируется сразу после входа.
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
+    participant C as Client (браузер)
     participant API as API
 
     U->>C: Открыть вкладку «Расписание»
@@ -123,14 +120,14 @@ sequenceDiagram
     end
 
     alt Нет сети (NFR-24)
-        C->>C: Показать кэш списка слотов
+        C->>C: Показать кэш списка слотов (через Service Worker / Cache API)
         C-->>U: Лента + баннер «Данные могли устареть · Обновить»
         Note over C: CTA записи / Alert List — заблокированы
     end
 
 
 Ключевые моменты:
-Лента слотов — можно кэшировать (с пометкой «могли устареть»).
+Лента слотов — можно кэшировать (через Service Worker, с пометкой «могли устареть»).
 Карточка слота — всегда свежий запрос (NFR-31), т.к. от неё зависит возможность записи.
 Поля can_book, rope_access_required, is_blocked, opens_at приходят с сервера — клиент не вычисляет их сам.
 
@@ -143,7 +140,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
+    participant C as Client (браузер)
     participant API as API
 
     U->>C: Открыть карточку слота
@@ -154,7 +151,6 @@ sequenceDiagram
     U->>C: Выбрать «Нужно прокатное снаряжение» (FR-11)
     U->>C: [Опц.] Включить «Записать ребёнка» + возраст ≥ 6 (FR-54)
     U->>C: Тап «Подтвердить запись»
-
     C->>C: Сгенерировать Idempotency-Key = UUID v4 (NFR-27)
 
     alt Первая запись в жизни (FR-51)
@@ -214,7 +210,7 @@ Retry при неопределённом результате — только 
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
+    participant C as Client (браузер)
     participant API as API
 
     U->>C: Открыть «Мои бронирования» → детали брони
@@ -236,7 +232,7 @@ sequenceDiagram
         C-->>U: Пояснение «Отмена возможна не позднее чем за 6 часов»
         C-->>U: Кнопка «Написать Оле» (FR-16a)
         U->>C: Тап «Написать Оле»
-        C->>C: Открыть deep-link tg://... (NFR-26)
+        C->>C: Открыть веб-ссылку https://t.me/... (NFR-26)
     end
 
     alt Расхождение клиентского прогноза и сервера (A2 UC-4)
@@ -254,7 +250,7 @@ sequenceDiagram
 Сервер — источник истины по времени и статусу отмены (FR-17).
 Граница «ранней» отмены — ровно за 6 часов включительно (FR-17).
 При успешной отмене сервер сам уведомляет первого в Alert List (FR-61).
-При поздней отмене — только deep-link в Telegram (FR-16a).
+При поздней отмене — только веб-ссылка в Telegram (FR-16a).
 
 ## 6. UC-5. Подписка на список ожидания (Alert List)
 
@@ -265,15 +261,14 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
+    participant C as Client (браузер)
     participant API as API
-    participant Push as APNs/FCM
+    participant Push as Web Push API
 
     U->>C: Открыть карточку заполненного слота
     C->>API: GET /slots/{id}
     API-->>C: 200 {slot, free_seats: 0, waitlist_joined: false}
     C-->>U: CTA «Уведомить, если появится место»
-
     U->>C: Тап CTA
     C->>C: Сгенерировать Idempotency-Key
     C->>API: POST /slots/{id}/waitlist<br/>Idempotency-Key: <UUID>
@@ -292,11 +287,10 @@ sequenceDiagram
         C-->>U: Кнопка Alert List скрывается
     end
 
-    
-    Note over API,PUSH: ...спустя некоторое время...
+    Note over API,Push: ...спустя некоторое время...
     Note over API: Другой клиент отменил бронь (UC-4)
     API->>Push: Push первому в очереди (FR-61)<br/>«Появилось место на тренировке N»
-    Push->>U: Push-уведомление
+    Push->>U: Push-уведомление в браузере
     U->>C: Тап по push → deep-link в карточку слота
     C->>API: GET /slots/{id}
     API-->>C: 200 {slot, free_seats: 1}
@@ -318,18 +312,17 @@ Alert List — уведомление, а не автобронь (BR-6).
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
+    participant C as Client (браузер)
     participant API as API
-    participant Push as APNs/FCM
+    participant Push as Web Push API
 
-    Note over API,PUSH: Тренировка завершилась ≥ 1 часа назад
+    Note over API,Push: Тренировка завершилась ≥ 1 часа назад
     API->>Push: Push «Оцените инструктора»<br/>(только для статуса attended, FR-57)
-    Push->>U: Push-уведомление
+    Push->>U: Push-уведомление в браузере
     U->>C: Тап по push → deep-link в экран оценки
     C->>API: GET /bookings/{id}/rating
     API-->>C: 200 {booking, instructor, rating: null|existing}
     C-->>U: Экран оценки (5 звёзд)
-
     U->>C: Выбрать 1–5 звёзд
     U->>C: Тап «Отправить оценку» / «Изменить оценку»
     C->>C: Сгенерировать Idempotency-Key
@@ -366,27 +359,26 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor U as Клиент
-    participant C as Client
-    participant K as Keychain
+    participant C as Client (браузер)
+    participant S as Storage
     participant API as API
 
     U->>C: Выполнить действие (напр., запись)
-    C->>K: Прочитать access_token
+    C->>S: Прочитать access_token
     C->>API: POST /bookings<br/>Authorization: Bearer <access>
     API-->>C: 401 Unauthorized (access expired)
-
-    C->>K: Прочитать refresh_token
+    C->>S: Прочитать refresh_token
     C->>API: POST /auth/refresh<br/>{refresh_token}
 
     alt Успех
         API-->>C: 200 {access_token, refresh_token}
-        C->>K: Сохранить новую пару токенов
+        C->>S: Сохранить новую пару токенов
         C->>API: Повтор исходного запроса<br/>POST /bookings с новым access
         API-->>C: 201 {...}
         C-->>U: Успех
     else Refresh тоже невалиден / отозван
         API-->>C: 401
-        C->>K: Очистить access + refresh
+        C->>S: Очистить access + refresh
         C-->>U: Переход на экран входа
     end
 
@@ -394,7 +386,7 @@ sequenceDiagram
 Ключевые моменты:
 Access-токен — короткоживущий, refresh — долгоживущий (NFR-18).
 При 401 — автоматическая попытка обновить access через refresh.
-При неудаче — очистка Keychain и редирект на экран входа.
+При неудаче — очистка хранилища и редирект на экран входа.
 
 ## 9. UC-8 (push). Push при отмене скалодромом
 
@@ -406,9 +398,9 @@ sequenceDiagram
     autonumber
     participant Owner as Владелец (админка)
     participant API as API
-    participant Push as APNs/FCM
+    participant Push as Web Push API
     participant U as Клиент
-    participant C as Client
+    participant C as Client (браузер)
 
     Owner->>API: Отменить слот {slot_id, reason}
     Note over API: Действие вне скоупа клиента —<br/>выполняется в существующей инфраструктуре
@@ -417,7 +409,7 @@ sequenceDiagram
         API->>Push: Push клиенту<br/>«Тренировка отменена: <reason>»<br/>+ кнопка «Выбрать другое время»
     end
 
-    Push->>U: Push-уведомление
+    Push->>U: Push-уведомление в браузере
     U->>C: Тап по push → deep-link
     C->>API: GET /slots?format=<same>&date_from=now
     API-->>C: 200 {slots: [...]}
@@ -450,7 +442,7 @@ sequenceDiagram
 
 Идемпотентность (NFR-27). Все мутирующие эндпоинты требуют заголовок Idempotency-Key: <UUID v4>. Сервер гарантирует идентичный ответ в окне ≥ 24 ч.
 Авторизация. Все эндпоинты, кроме /auth/otp/*, требуют Authorization: Bearer <access_token>.
-Время (NFR-29). API принимает/возвращает время в UTC (ISO 8601). Клиент отображает в локальной зоне.
+Время (NFR-29). API принимает/возвращает время в UTC (ISO 8601). Веб-приложение отображает в локальной зоне.
 Коды ответов. Клиент обрабатывает по единой матрице ошибок (UC-3, US-25):
 200/201 — успех;
 400 — валидация (повтор с исправлениями);
@@ -462,7 +454,7 @@ sequenceDiagram
 429 — rate-limit (ждать retry_after);
 5xx / таймаут — retry с тем же Idempotency-Key.
 Timeout. ~10 с на запрос (NFR-24).
-Offline (NFR-24). Мутации офлайн запрещены. Чтение — из кэша с пометкой «данные могли устареть».
+Offline (NFR-24). Мутации офлайн запрещены. Чтение — из кэша (через Service Worker / Cache API) с пометкой «данные могли устареть».
 Приватность (NFR-20). В логах и UI — только маскированный телефон (+7 *** *** ** 67). OTP-коды и токены не логируются.
 
 ## 12. Что НЕ покрыто диаграммами (намеренно)

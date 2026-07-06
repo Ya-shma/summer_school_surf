@@ -1,0 +1,871 @@
+openapi: 3.1.0
+info:
+  title: Vertical Climbing Gym — Client API
+  version: 1.0.0
+  description: |
+    Клиентский API скалодрома «Вертикаль». Источник истины — бэкенд.
+    Все мутирующие эндпоинты требуют заголовок `Idempotency-Key: <UUID v4>`.
+    Время передаётся в UTC (ISO 8601). Авторизация — Bearer JWT.
+  contact:
+    name: Olya (owner)
+servers:
+  - url: https://api.vertical-climbing.example/v1
+    description: Production
+  - url: https://api.vertical-climbing.stage.example/v1
+    description: Staging
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Slots
+  - name: Bookings
+  - name: Waitlist
+  - name: Ratings
+  - name: Profile
+  - name: Push
+
+paths:
+  # ============================================================
+  # AUTH
+  # ============================================================
+  /auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Запрос SMS OTP-кода
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpRequest'
+      responses:
+        '200':
+          description: Код отправлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/SmsProviderError'
+
+  /auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Подтверждение OTP-кода
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+      responses:
+        '200':
+          description: Успешный вход
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Неверный код / блокировка
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/InvalidCodeError'
+                  - $ref: '#/components/schemas/BlockedError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Обновление access-токена по refresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Новая пара токенов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================================
+  # SLOTS
+  # ============================================================
+  /slots:
+    get:
+      tags: [Slots]
+      summary: Список слотов (лента)
+      parameters:
+        - name: date_from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: date_to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: format
+          in: query
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/FormatType' }
+          style: form
+          explode: false
+        - name: instructor_id
+          in: query
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+          style: form
+          explode: false
+        - name: only_available
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Список слотов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /slots/{id}:
+    get:
+      tags: [Slots]
+      summary: Детали слота (карточка)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Карточка слота
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================
+  # WAITLIST (Alert List)
+  # ============================================================
+  /slots/{id}/waitlist:
+    post:
+      tags: [Waitlist]
+      summary: Подписка на Alert List
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Подписка создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitlistEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Уже в списке / слот не заполнен
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/WaitlistAlreadyJoinedError'
+                  - $ref: '#/components/schemas/SlotNotFullError'
+        '410':
+          $ref: '#/components/responses/SlotCancelled'
+
+    delete:
+      tags: [Waitlist]
+      summary: Отписка от Alert List
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Отписка выполнена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Не в списке
+
+  # ============================================================
+  # BOOKINGS
+  # ============================================================
+  /bookings:
+    post:
+      tags: [Bookings]
+      summary: Создание брони
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingRequest'
+      responses:
+        '201':
+          description: Бронь создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          description: Валидация (возраст ребёнка / ТБ)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ChildAgeInvalidError'
+                  - $ref: '#/components/schemas/SafetyRulesNotAcceptedError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Гейткинг / блокировка
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RopeAccessRequiredError'
+                  - $ref: '#/components/schemas/ClientBlockedError'
+        '409':
+          description: Конфликт (мест нет / проката нет / двойная бронь)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SlotFullError'
+                  - $ref: '#/components/schemas/RentalUnavailableError'
+                  - $ref: '#/components/schemas/DoubleBookingError'
+        '410':
+          $ref: '#/components/responses/SlotCancelled'
+        '422':
+          $ref: '#/components/responses/SlotStarted'
+
+    get:
+      tags: [Bookings]
+      summary: Список броней клиента
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/BookingStatus' }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Список броней
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /bookings/{id}:
+    get:
+      tags: [Bookings]
+      summary: Детали брони
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Детали брони
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bookings/{id}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Отмена брони
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Бронь отменена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Отмена запрещена (can_cancel=false)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancellationForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/SlotStarted'
+
+  # ============================================================
+  # RATINGS
+  # ============================================================
+  /bookings/{id}/rating:
+    post:
+      tags: [Ratings]
+      summary: Оценка инструктора
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRatingRequest'
+      responses:
+        '200':
+          description: Оценка сохранена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorRating'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Бронь не посещена / окно закрыто
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/NotAttendedError'
+                  - $ref: '#/components/schemas/RatingWindowClosedError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    get:
+      tags: [Ratings]
+      summary: Получить существующую оценку
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Оценка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorRating'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Оценки ещё нет
+
+  # ============================================================
+  # PROFILE
+  # ============================================================
+  /profile:
+    get:
+      tags: [Profile]
+      summary: Текущий профиль
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    patch:
+      tags: [Profile]
+      summary: Обновление профиля
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Профиль обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================================
+  # PUSH
+  # ============================================================
+  /push/token:
+    post:
+      tags: [Push]
+      summary: Регистрация push-токена устройства
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenRequest'
+      responses:
+        '200':
+          description: Токен зарегистрирован
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+# ============================================================
+# COMPONENTS
+# ============================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID v4, уникальный для операции. Окно идемпотентности ≥ 24 ч.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    # ---------- Auth ----------
+    OtpRequest:
+      type: object
+      required: [phone, consent_pd]
+      properties:
+        phone:
+          type: string
+          pattern: '^\+7\d{10}$'
+          example: '+79991234567'
+        consent_pd:
+          type: boolean
+          const: true
+
+    OtpRequestResponse:
+      type: object
+      required: [otp_ttl, retry_after]
+      properties:
+        otp_ttl: { type: integer, example: 300 }
+        retry_after: { type: integer, example: 30 }
+
+    OtpVerifyRequest:
+      type: object
+      required: [phone, code]
+      properties:
+        phone: { type: string, pattern: '^\+7\d{10}$' }
+        code: { type: string, pattern: '^\d{4,6}$' }
+
+    AuthResponse:
+      type: object
+      required: [access_token, refresh_token, profile]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        profile:
+          oneOf:
+            - $ref: '#/components/schemas/Client'
+            - type: 'null'
+              description: null для нового клиента (нужно заполнить профиль)
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    # ---------- Client / Profile ----------
+    Client:
+      type: object
+      required: [id, name, phone_masked, rope_access, is_permanent, is_blocked, safety_rules_accepted, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        phone_masked: { type: string, example: '+7 *** *** ** 67' }
+        age: { type: integer, nullable: true }
+        birthday: { type: string, format: date, nullable: true }
+        rope_access: { type: boolean }
+        is_permanent: { type: boolean }
+        attended_count: { type: integer }
+        is_blocked: { type: boolean }
+        blocked_until: { type: string, format: date-time, nullable: true }
+        blocked_reason: { type: string, nullable: true }
+        safety_rules_accepted: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        age: { type: integer, minimum: 6, maximum: 120, nullable: true }
+        birthday: { type: string, format: date, nullable: true }
+        safety_rules_accepted: { type: boolean }
+      additionalProperties: false
+
+    # ---------- Slots ----------
+    FormatType:
+      type: string
+      enum: [novice, experienced]
+
+    SlotStatus:
+      type: string
+      enum: [scheduled, cancelled]
+
+    SlotListItem:
+      type: object
+      required: [id, start_at, format, instructor, total_seats, free_seats, price, status]
+      properties:
+        id: { type: string, format: uuid }
+        start_at: { type: string, format: date-time }
+        format:
+          type: object
+          required: [id, type, name]
+          properties:
+            id: { type: string, format: uuid }
+            type: { $ref: '#/components/schemas/FormatType' }
+            name: { type: string }
+        instructor:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        total_seats: { type: integer }
+        free_seats: { type: integer }
+        price: { type: number, format: money, example: 1500 }
+        status: { $ref: '#/components/schemas/SlotStatus' }
+        cancel_reason: { type: string, nullable: true }
+        opens_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Момент, когда слот откроется для текущего клиента (с учётом приоритета постоянных)
+        is_available_for_client: { type: boolean }
+
+    SlotListResponse:
+      type: object
+      required: [slots]
+      properties:
+        slots:
+          type: array
+          items: { $ref: '#/components/schemas/SlotListItem' }
+
+    SlotDetailResponse:
+      type: object
+      required: [slot, can_book, rope_access_required, is_blocked, opens_at, waitlist_joined]
+      properties:
+        slot:
+          allOf:
+            - $ref: '#/components/schemas/SlotListItem'
+            - type: object
+              properties:
+                free_rental_kits: { type: integer }
+                rental_price: { type: number, format: money }
+                address: { type: string }
+                description: { type: string, nullable: true }
+                checklist: { type: string, nullable: true }
+                safety_rules_url: { type: string, format: uri, nullable: true }
+        can_book: { type: boolean }
+        rope_access_required: { type: boolean }
+        is_blocked: { type: boolean }
+        blocked_until: { type: string, format: date-time, nullable: true }
+        opens_at: { type: string, format: date-time, nullable: true }
+        waitlist_joined: { type: boolean }
+        price_total: { type: number, format: money, description: 'price + rental_price (если выбран прокат)' }
+
+    # ---------- Bookings ----------
+    BookingStatus:
+      type: string
+      enum: [booked, cancelled_by_client, cancelled_late, no_show, cancelled_by_gym, attended]
+
+    CreateBookingRequest:
+      type: object
+      required: [slot_id, rental]
+      properties:
+        slot_id: { type: string, format: uuid }
+        rental: { type: boolean, description: 'true — нужно прокатное снаряжение' }
+        child_age:
+          type: integer
+          minimum: 6
+          nullable: true
+          description: Возраст ребёнка; если null — бронь на взрослого клиента
+
+    Booking:
+      type: object
+      required: [id, slot_id, status, rental_count, price_total, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        slot_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/BookingStatus' }
+        rental_count: { type: integer, enum: [0, 1] }
+        participant_age: { type: integer, nullable: true }
+        price_total: { type: number, format: money }
+        created_at: { type: string, format: date-time }
+        cancelled_at: { type: string, format: date-time, nullable: true }
+
+    BookingDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/Booking'
+        - type: object
+          required: [slot, can_cancel, cancel_deadline]
+          properties:
+            slot: { $ref: '#/components/schemas/SlotListItem' }
+            can_cancel: { type: boolean }
+            cancel_deadline: { type: string, format: date-time, nullable: true }
+            cancel_reason: { type: string, nullable: true, description: 'Причина, если cancelled_by_gym' }
+
+    BookingListResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BookingDetailResponse' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    # ---------- Ratings ----------
+    InstructorRating:
+      type: object
+      required: [id, booking_id, instructor_id, score, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        booking_id: { type: string, format: uuid }
+        instructor_id: { type: string, format: uuid }
+        score: { type: integer, minimum: 1, maximum: 5 }
+        created_at: { type: string, format: date-time }
+
+    CreateRatingRequest:
+      type: object
+      required: [score]
+      properties:
+        score: { type: integer, minimum: 1, maximum: 5 }
+
+    # ---------- Waitlist ----------
+    WaitlistStatus:
+      type: string
+      enum: [active, notified, expired]
+
+    WaitlistEntry:
+      type: object
+      required: [id, slot_id, position, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        slot_id: { type: string, format: uuid }
+        position: { type: integer }
+        status: { $ref: '#/components/schemas/WaitlistStatus' }
+        created_at: { type: string, format: date-time }
+
+    # ---------- Push ----------
+    PushTokenRequest:
+      type: object
+      required: [platform, token]
+      properties:
+        platform: { type: string, enum: [ios, android] }
+        token: { type: string }
+
+    # ---------- Errors ----------
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Требуется авторизация / refresh-flow
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Превышен лимит запросов
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  retry_after: { type: integer }
+    SlotCancelled:
+      description: Слот отменён скалодромом
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  slot_id: { type: string, format: uuid }
+                  reason: { type: string }
+    SlotStarted:
+      description: Тренировка уже началась
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  slot_id: { type: string, format: uuid }
+                  start_at: { type: string, format: date-time }
+    SmsProviderError:
+      description: SMS-провайдер недоступен
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    # Бизнес-ошибки (4xx с кодом)
+    InvalidCodeError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            attempts_left: { type: integer }
+            blocked_until: { type: string, format: date-time }
+    BlockedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            blocked_until: { type: string, format: date-time }
+    SlotFullError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            available_seats: { type: integer }
+            available_rental_kits: { type: integer }
+    RentalUnavailableError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            available_rental_kits: { type: integer }
+    DoubleBookingError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            booking_id: { type: string, format: uuid }
+    RopeAccessRequiredError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            slot_id: { type: string, format: uuid }
+            format: { $ref: '#/components/schemas/FormatType' }
+    ClientBlockedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            blocked_until: { type: string, format: date-time }
+            reason: { type: string }
+    ChildAgeInvalidError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            min_age: { type: integer, const: 6 }
+    SafetyRulesNotAcceptedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+    CancellationForbiddenError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            cancel_deadline: { type: string, format: date-time }
+            reason: { type: string, enum: [late_cancellation, slot_started] }
+    WaitlistAlreadyJoinedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            position: { type: integer }
+    SlotNotFullError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            available_seats: { type: integer }
+    NotAttendedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+    RatingWindowClosedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
